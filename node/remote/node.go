@@ -215,15 +215,21 @@ func (cp *Node) Tx(hash string) (*types.Transaction, error) {
 }
 
 // Txs implements node.Node
+// NOTE: DChain first tx is always the verifiable presentation so we do not parse it for now
+// TODO display this
 func (cp *Node) Txs(block *tmctypes.ResultBlock) ([]*types.Transaction, error) {
-	txResponses := make([]*types.Transaction, len(block.Block.Txs))
+	txResponses := make([]*types.Transaction, len(block.Block.Txs)-1)
 	for i, tmTx := range block.Block.Txs {
+		if i == 0 {
+			cp.client.Logger.Debug("Remote node impl: Skipping first tx")
+			continue
+		}
 		txResponse, err := cp.Tx(fmt.Sprintf("%X", tmTx.Hash()))
 		if err != nil {
 			return nil, err
 		}
 
-		txResponses[i] = txResponse
+		txResponses[i-1] = txResponse
 	}
 
 	return txResponses, nil
