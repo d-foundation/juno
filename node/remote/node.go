@@ -2,7 +2,9 @@ package remote
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,10 +12,15 @@ import (
 	"strings"
 	"time"
 
+	abcitypes "github.com/cometbft/cometbft/abci/types"
 	tmtypes "github.com/cometbft/cometbft/types"
+	sdkcodectypes "github.com/cosmos/cosmos-sdk/codec/types"
+	sdktypes "github.com/cosmos/cosmos-sdk/types"
+	sdktxtypes "github.com/cosmos/cosmos-sdk/types/tx"
 
 	constypes "github.com/cometbft/cometbft/consensus/types"
 	tmjson "github.com/cometbft/cometbft/libs/json"
+	cometbfttypes "github.com/cometbft/cometbft/types"
 
 	"github.com/forbole/juno/v6/node"
 
@@ -22,6 +29,7 @@ import (
 	httpclient "github.com/cometbft/cometbft/rpc/client/http"
 	tmctypes "github.com/cometbft/cometbft/rpc/core/types"
 	jsonrpcclient "github.com/cometbft/cometbft/rpc/jsonrpc/client"
+	sdwjt "github.com/hyperledger/aries-framework-go/component/models/sdjwt/common"
 )
 
 var (
@@ -218,21 +226,132 @@ func (cp *Node) Tx(hash string) (*types.Transaction, error) {
 // NOTE: DChain first tx is always the verifiable presentation so we do not parse it for now
 // TODO display this
 func (cp *Node) Txs(block *tmctypes.ResultBlock) ([]*types.Transaction, error) {
-	txResponses := make([]*types.Transaction, len(block.Block.Txs)-1)
+	txResponses := make([]*types.Transaction, len(block.Block.Txs))
+	var txResponse *types.Transaction
+	var err error
 	for i, tmTx := range block.Block.Txs {
 		if i == 0 {
-			cp.client.Logger.Debug("Remote node impl: Skipping first tx")
-			continue
-		}
-		txResponse, err := cp.Tx(fmt.Sprintf("%X", tmTx.Hash()))
-		if err != nil {
-			return nil, err
+			txResponse, err = cp.HandleVPTxs(&tmTx, block)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			txResponse, err = cp.Tx(fmt.Sprintf("%X", tmTx.Hash()))
+			if err != nil {
+				return nil, err
+			}
 		}
 
-		txResponses[i-1] = txResponse
+		txResponses[i] = txResponse
 	}
 
 	return txResponses, nil
+}
+
+func (cp Node) HandleVPTxs(txn *cometbfttypes.Tx, block *tmctypes.ResultBlock) (*types.Transaction, error) {
+	disclosedJson := map[string]interface{}{}
+
+	// Parse VP
+	parsed := sdwjt.ParseCombinedFormatForPresentation(strings.TrimSpace(string(*txn)))
+
+	// Compile disclosed values
+	for _, disclosure := range parsed.Disclosures {
+		decoded, err := base64.RawURLEncoding.DecodeString(disclosure)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode disclosure: %w", err)
+		}
+		var disclosureArr []interface{}
+		err = json.Unmarshal(decoded, &disclosureArr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to unmarshal disclosure array: %w", err)
+		}
+		disclosedJson[disclosureArr[1].(string)] = disclosureArr[2]
+	}
+
+	// Add Type into message
+	disclosedJson["@type"] = types.VP_TYPE
+
+	jsonBytes, err := json.Marshal(disclosedJson)
+	if err != nil {
+		return nil, err
+	}
+
+	txAny := &sdkcodectypes.Any{
+		TypeUrl: types.VP_TYPE,
+		Value:   jsonBytes,
+	}
+
+	// Compile fake txBody
+	sdkTxBody := sdktxtypes.TxBody{
+			Memo: "Verifiable Presentation",
+			Messages: []*sdkcodectypes.Any{
+				txAny,
+			},
+	}
+	txBody := types.TxBody{
+		TxBody:        &sdkTxBody,
+		TimeoutHeight: uint64(block.Block.Header.Height),
+		Messages:      []types.Message{
+			types.NewVPStandardMessage(jsonBytes),
+		},
+	}
+
+	// Compile fake tx
+	sdkTx := sdktxtypes.Tx{
+		Body:   &sdkTxBody,
+		Signatures: [][]byte{},
+	}
+	tx := &types.Tx{
+		Tx:   &sdkTx,
+		Body: &txBody,
+		AuthInfo: &types.AuthInfo{
+			SignerInfos: []*types.SignerInfo{},
+			Fee:         &types.Fee{},
+		},
+	}
+
+	// Make salted hash, cause VP is not changing so fast
+	salt := make([]byte, 8)
+	binary.LittleEndian.PutUint64(salt, uint64(block.Block.Header.Height))
+	finalBytes := append(jsonBytes, salt...)
+
+	hash := sha256.Sum256(finalBytes)
+
+	// Compile fake txResponse
+	valAddr, err := sdktypes.ValAddressFromHex(block.Block.Header.ProposerAddress.String())
+	if err != nil {
+		return nil, err
+	}
+	sdkTxResponse := &sdktypes.TxResponse{
+		Tx:     txAny,
+		Events: []abcitypes.Event{
+			{
+				Type: "message",
+				Attributes: []abcitypes.EventAttribute{
+					{
+						Key:   "proposer",
+						Value: valAddr.String(),
+					},
+				},
+			},
+		},
+		Height: block.Block.Header.Height,
+		TxHash: fmt.Sprintf("%X", hash[:]),
+		
+	}
+
+	txResponse := &types.TxResponse{
+		TxResponse: sdkTxResponse,
+		Height: uint64(block.Block.Header.Height),
+		GasWanted: uint64(0),
+		GasUsed: uint64(0),
+		Tx : tx,
+	}
+	
+	return &types.Transaction{
+		TxResponse: txResponse,
+		Tx:         tx,
+	}, nil
 }
 
 // TxSearch implements node.Node
