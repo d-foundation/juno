@@ -11,6 +11,7 @@ require (
 	github.com/cosmos/cosmos-sdk v0.50.6
 	github.com/cosmos/gogoproto v1.4.12
 	github.com/go-co-op/gocron v1.13.0
+	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/golangci/golangci-lint v1.52.2
 	github.com/gorilla/mux v1.8.0
 	github.com/hyperledger/aries-framework-go/component/models v0.0.0-20240327163625-64dd8acc0750
@@ -198,7 +199,7 @@ require (
 	github.com/mtibben/percent v0.2.1 // indirect
 	github.com/multiformats/go-base32 v0.1.0 // indirect
 	github.com/multiformats/go-base36 v0.1.0 // indirect
-	github.com/multiformats/go-multibase v0.2.0 // indirect
+	github.com/multiformats/go-multibase v0.1.1 // indirect
 	github.com/nakabonne/nestif v0.3.1 // indirect
 	github.com/nbutton23/zxcvbn-go v0.0.0-20210217022336-fa2cb2858354 // indirect
 	github.com/nishanths/exhaustive v0.9.5 // indirect

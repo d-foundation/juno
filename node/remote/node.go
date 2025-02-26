@@ -29,6 +29,7 @@ import (
 	httpclient "github.com/cometbft/cometbft/rpc/client/http"
 	tmctypes "github.com/cometbft/cometbft/rpc/core/types"
 	jsonrpcclient "github.com/cometbft/cometbft/rpc/jsonrpc/client"
+	jwt "github.com/golang-jwt/jwt/v5"
 	sdwjt "github.com/hyperledger/aries-framework-go/component/models/sdjwt/common"
 )
 
@@ -249,13 +250,30 @@ func (cp *Node) Txs(block *tmctypes.ResultBlock) ([]*types.Transaction, error) {
 }
 
 func (cp Node) HandleVPTxs(txn *cometbfttypes.Tx, block *tmctypes.ResultBlock) (*types.Transaction, error) {
-	disclosedJson := map[string]interface{}{}
+	txPayload := map[string]interface{}{}
+	disclosedValues := map[string]interface{}{}
 
-	// Parse VP
-	parsed := sdwjt.ParseCombinedFormatForPresentation(strings.TrimSpace(string(*txn)))
+	parsedJWT, err := jwt.Parse(strings.TrimSpace(string(*txn)), func(t *jwt.Token) (interface{}, error) {
+		return nil, nil
+	})
+
+	parsedSDWJT := sdwjt.ParseCombinedFormatForPresentation(strings.TrimSpace(string(*txn)))
+
+	parsedClaims := parsedJWT.Claims.(jwt.MapClaims)
+
+	// Try to get elems from payload if it's Validator's presentation
+	validator := parsedClaims["validator"]
+	idx := parsedClaims["idx"]
+
+	if validator != nil && idx != nil {
+		txPayload["validator"] = validator.(string)
+		disclosedValues["validator"] = validator.(string)
+		disclosedValues["idx"] = idx.(float64)
+	}
+
 
 	// Compile disclosed values
-	for _, disclosure := range parsed.Disclosures {
+	for _, disclosure := range parsedSDWJT.Disclosures {
 		decoded, err := base64.RawURLEncoding.DecodeString(disclosure)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode disclosure: %w", err)
@@ -265,13 +283,14 @@ func (cp Node) HandleVPTxs(txn *cometbfttypes.Tx, block *tmctypes.ResultBlock) (
 		if err != nil {
 			return nil, fmt.Errorf("failed to unmarshal disclosure array: %w", err)
 		}
-		disclosedJson[disclosureArr[1].(string)] = disclosureArr[2]
+		disclosedValues[disclosureArr[1].(string)] = disclosureArr[2]
 	}
 
 	// Add Type into message
-	disclosedJson["@type"] = types.VP_TYPE
+	txPayload["@type"] = types.VP_TYPE
+	txPayload["disclosedValues"] = disclosedValues
 
-	jsonBytes, err := json.Marshal(disclosedJson)
+	jsonBytes, err := json.Marshal(txPayload)
 	if err != nil {
 		return nil, err
 	}
