@@ -2,7 +2,7 @@ package types
 
 import "encoding/json"
 
-const VP_TYPE = "/dchain.tx.v1.MsgVerifiablePresentation"
+const VP_TYPE = "/d.tx.v1.MsgValidatorSdjwt"
 const VP_MSG_INDEX = 0
 
 type VPStandardMessage struct {
