@@ -166,8 +166,8 @@ func (db *Database) SaveTx(tx *types.Transaction) error {
 func (db *Database) saveTxInsidePartition(tx *types.Transaction, partitionID int64) error {
 	sqlStatement := `
 INSERT INTO transaction 
-(hash, height, success, messages, memo, signatures, signer_infos, fee, gas_wanted, gas_used, raw_log, logs, partition_id) 
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) 
+(hash, height, success, messages, memo, signatures, signer_infos, fee, gas_wanted, gas_used, raw_log, logs, partition_id, extension_options) 
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) 
 ON CONFLICT (hash, partition_id) DO UPDATE 
 	SET height = excluded.height, 
 		success = excluded.success, 
@@ -179,7 +179,8 @@ ON CONFLICT (hash, partition_id) DO UPDATE
 		gas_wanted = excluded.gas_wanted, 
 		gas_used = excluded.gas_used,
 		raw_log = excluded.raw_log, 
-		logs = excluded.logs`
+		logs = excluded.logs,
+		extension_options = excluded.extension_options`
 
 	var sigs = make([]string, len(tx.Signatures))
 	for index, sig := range tx.Signatures {
@@ -190,6 +191,15 @@ ON CONFLICT (hash, partition_id) DO UPDATE
 	for index, msg := range tx.Body.Messages {
 		msgs[index] = string(msg.GetBytes())
 	}
+	var extensionOptions = make([]string, len(tx.Body.ExtensionOptions))
+	for index, option := range tx.Body.ExtensionOptions {
+		v, err := json.Marshal(option)
+		if err != nil {
+			return err
+		}
+		extensionOptions[index] = string(v)
+	}
+	extensionOptionsBz := fmt.Sprintf("[%s]", strings.Join(extensionOptions, ","))
 	msgsBz := fmt.Sprintf("[%s]", strings.Join(msgs, ","))
 
 	feeBz, err := json.Marshal(tx.AuthInfo.Fee)
@@ -218,6 +228,7 @@ ON CONFLICT (hash, partition_id) DO UPDATE
 		sigInfoBz, string(feeBz),
 		tx.GasWanted, tx.GasUsed, tx.RawLog, string(logsBz),
 		partitionID,
+		extensionOptionsBz,
 	)
 	return err
 }
