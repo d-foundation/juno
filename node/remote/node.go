@@ -232,10 +232,11 @@ func (cp *Node) Txs(block *tmctypes.ResultBlock) ([]*types.Transaction, error) {
 	var err error
 	for i, tmTx := range block.Block.Txs {
 		if i == 0 {
-			txResponse, err = cp.HandleVPTxs(&tmTx, block)
-			if err != nil {
-				return nil, err
-			}
+			// txResponse, err = cp.HandleVPTxs(&tmTx, block)
+			// if err != nil {
+			// 	return nil, err
+			// }
+			continue // Skip the first tx as it is a VP
 		} else {
 			txResponse, err = cp.Tx(fmt.Sprintf("%X", tmTx.Hash()))
 			if err != nil {
