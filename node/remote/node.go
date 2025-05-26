@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	cosmoscdc "github.com/cosmos/cosmos-sdk/codec"
 	abcitypes "github.com/cometbft/cometbft/abci/types"
 	tmtypes "github.com/cometbft/cometbft/types"
 	sdkcodectypes "github.com/cosmos/cosmos-sdk/codec/types"
@@ -29,6 +30,7 @@ import (
 	httpclient "github.com/cometbft/cometbft/rpc/client/http"
 	tmctypes "github.com/cometbft/cometbft/rpc/core/types"
 	jsonrpcclient "github.com/cometbft/cometbft/rpc/jsonrpc/client"
+	vcvtypes "github.com/d-foundation/protocol/x/vcv/types"
 	jwt "github.com/golang-jwt/jwt/v5"
 	sdwjt "github.com/hyperledger/aries-framework-go/component/models/sdjwt/common"
 )
@@ -41,12 +43,13 @@ var (
 // chain SDK REST client that allows for essential data queries.
 type Node struct {
 	ctx          context.Context
+	cdc          cosmoscdc.Codec
 	client       *httpclient.HTTP
 	txServiceAPI string
 }
 
 // NewNode allows to build a new Node instance
-func NewNode(cfg *Details) (*Node, error) {
+func NewNode(cfg *Details, cdc cosmoscdc.Codec) (*Node, error) {
 	httpClient, err := jsonrpcclient.DefaultHTTPClient(cfg.RPC.Address)
 	if err != nil {
 		return nil, err
@@ -72,6 +75,7 @@ func NewNode(cfg *Details) (*Node, error) {
 	return &Node{
 		ctx: context.Background(),
 
+		cdc:          cdc,
 		client:       rpcClient,
 		txServiceAPI: cfg.API.Address,
 	}, nil
@@ -232,11 +236,10 @@ func (cp *Node) Txs(block *tmctypes.ResultBlock) ([]*types.Transaction, error) {
 	var err error
 	for i, tmTx := range block.Block.Txs {
 		if i == 0 {
-			// txResponse, err = cp.HandleVPTxs(&tmTx, block)
-			// if err != nil {
-			// 	return nil, err
-			// }
-			continue // Skip the first tx as it is a VP
+			txResponse, err = cp.HandleVPTxs(&tmTx, block)
+			if err != nil {
+				return nil, err
+			}
 		} else {
 			txResponse, err = cp.Tx(fmt.Sprintf("%X", tmTx.Hash()))
 			if err != nil {
@@ -253,15 +256,27 @@ func (cp *Node) Txs(block *tmctypes.ResultBlock) ([]*types.Transaction, error) {
 func (cp Node) HandleVPTxs(txn *cometbfttypes.Tx, block *tmctypes.ResultBlock) (*types.Transaction, error) {
 	txPayload := map[string]interface{}{}
 	disclosedValues := map[string]interface{}{}
+	decoded := &vcvtypes.MsgExtendedProposalTxn{}
 
-	parsedJWT, err := jwt.Parse(strings.TrimSpace(string(*txn)), func(t *jwt.Token) (interface{}, error) {
+	if txn == nil || len(*txn) == 0 {
+		return nil, fmt.Errorf("transaction is nil or empty")
+	}
+
+	// Unmarshal the transaction
+	// Note: This assumes that the transaction is a MsgExtendedProposalTxn
+	err := cp.cdc.Unmarshal(*txn, decoded)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal transaction: %w", err)
+	}
+
+	parsedJWT, err := jwt.Parse(strings.TrimSpace(string(decoded.Vp)), func(t *jwt.Token) (interface{}, error) {
 		return nil, nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse JWT: %w", err)
 	}
 
-	parsedSDWJT := sdwjt.ParseCombinedFormatForPresentation(strings.TrimSpace(string(*txn)))
+	parsedSDWJT := sdwjt.ParseCombinedFormatForPresentation(strings.TrimSpace(string(decoded.Vp)))
 
 	parsedClaims := parsedJWT.Claims.(jwt.MapClaims)
 
@@ -274,7 +289,6 @@ func (cp Node) HandleVPTxs(txn *cometbfttypes.Tx, block *tmctypes.ResultBlock) (
 		disclosedValues["validator"] = validator.(string)
 		disclosedValues["idx"] = idx.(float64)
 	}
-
 
 	// Compile disclosed values
 	for _, disclosure := range parsedSDWJT.Disclosures {
@@ -306,22 +320,22 @@ func (cp Node) HandleVPTxs(txn *cometbfttypes.Tx, block *tmctypes.ResultBlock) (
 
 	// Compile fake txBody
 	sdkTxBody := sdktxtypes.TxBody{
-			Memo: "Verifiable Presentation",
-			Messages: []*sdkcodectypes.Any{
-				txAny,
-			},
+		Memo: "Verifiable Presentation",
+		Messages: []*sdkcodectypes.Any{
+			txAny,
+		},
 	}
 	txBody := types.TxBody{
 		TxBody:        &sdkTxBody,
 		TimeoutHeight: uint64(block.Block.Header.Height),
-		Messages:      []types.Message{
+		Messages: []types.Message{
 			types.NewVPStandardMessage(jsonBytes),
 		},
 	}
 
 	// Compile fake tx
 	sdkTx := sdktxtypes.Tx{
-		Body:   &sdkTxBody,
+		Body:       &sdkTxBody,
 		Signatures: [][]byte{},
 	}
 	tx := &types.Tx{
@@ -346,7 +360,7 @@ func (cp Node) HandleVPTxs(txn *cometbfttypes.Tx, block *tmctypes.ResultBlock) (
 		return nil, err
 	}
 	sdkTxResponse := &sdktypes.TxResponse{
-		Tx:     txAny,
+		Tx: txAny,
 		Events: []abcitypes.Event{
 			{
 				Type: "message",
@@ -360,17 +374,16 @@ func (cp Node) HandleVPTxs(txn *cometbfttypes.Tx, block *tmctypes.ResultBlock) (
 		},
 		Height: block.Block.Header.Height,
 		TxHash: fmt.Sprintf("%X", hash[:]),
-		
 	}
 
 	txResponse := &types.TxResponse{
 		TxResponse: sdkTxResponse,
-		Height: uint64(block.Block.Header.Height),
-		GasWanted: uint64(0),
-		GasUsed: uint64(0),
-		Tx : tx,
+		Height:     uint64(block.Block.Header.Height),
+		GasWanted:  uint64(0),
+		GasUsed:    uint64(0),
+		Tx:         tx,
 	}
-	
+
 	return &types.Transaction{
 		TxResponse: txResponse,
 		Tx:         tx,
