@@ -49,7 +49,7 @@ type Node struct {
 }
 
 // NewNode allows to build a new Node instance
-func NewNode(cfg *Details, cdc cosmoscdc.Codec) (*Node, error) {
+func NewNode(cfg *Details) (*Node, error) {
 	httpClient, err := jsonrpcclient.DefaultHTTPClient(cfg.RPC.Address)
 	if err != nil {
 		return nil, err
@@ -71,6 +71,8 @@ func NewNode(cfg *Details, cdc cosmoscdc.Codec) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	cdc := cosmoscdc.NewProtoCodec(sdkcodectypes.NewInterfaceRegistry())
 
 	return &Node{
 		ctx: context.Background(),
@@ -236,7 +238,7 @@ func (cp *Node) Txs(block *tmctypes.ResultBlock) ([]*types.Transaction, error) {
 	var err error
 	for i, tmTx := range block.Block.Txs {
 		if i == 0 {
-			txResponse, err = cp.HandleVPTxs(&tmTx, block)
+			txResponse, err = cp.HandleVPTxs(tmTx, block)
 			if err != nil {
 				return nil, err
 			}
@@ -253,18 +255,18 @@ func (cp *Node) Txs(block *tmctypes.ResultBlock) ([]*types.Transaction, error) {
 	return txResponses, nil
 }
 
-func (cp Node) HandleVPTxs(txn *cometbfttypes.Tx, block *tmctypes.ResultBlock) (*types.Transaction, error) {
+func (cp Node) HandleVPTxs(txn cometbfttypes.Tx, block *tmctypes.ResultBlock) (*types.Transaction, error) {
 	txPayload := map[string]interface{}{}
 	disclosedValues := map[string]interface{}{}
 	decoded := &vcvtypes.MsgExtendedProposalTxn{}
 
-	if txn == nil || len(*txn) == 0 {
+	if txn == nil || len(txn) == 0 {
 		return nil, fmt.Errorf("transaction is nil or empty")
 	}
 
 	// Unmarshal the transaction
 	// Note: This assumes that the transaction is a MsgExtendedProposalTxn
-	err := cp.cdc.Unmarshal(*txn, decoded)
+	err := cp.cdc.Unmarshal(txn, decoded)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal transaction: %w", err)
 	}

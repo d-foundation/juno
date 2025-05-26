@@ -15,7 +15,7 @@ import (
 func BuildNode(cfg nodeconfig.Config, txConfig client.TxConfig, codec codec.Codec) (node.Node, error) {
 	switch cfg.Type {
 	case nodeconfig.TypeRemote:
-		return remote.NewNode(cfg.Details.(*remote.Details), codec)
+		return remote.NewNode(cfg.Details.(*remote.Details))
 	case nodeconfig.TypeLocal:
 		return local.NewNode(cfg.Details.(*local.Details), txConfig, codec)
 	case nodeconfig.TypeNone:
