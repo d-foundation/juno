@@ -285,9 +285,6 @@ func (cp Node) HandleVPTxs(txn cometbfttypes.Tx, block *tmctypes.ResultBlock) (*
 	parsedJWT, err := jwt.Parse(strings.TrimSpace(vp), func(t *jwt.Token) (interface{}, error) {
 		return nil, nil
 	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse JWT: %w", err)
-	}
 
 	parsedSDWJT := sdwjt.ParseCombinedFormatForPresentation(strings.TrimSpace(vp))
 
