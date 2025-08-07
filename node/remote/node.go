@@ -35,11 +35,6 @@ import (
 	sdwjt "github.com/hyperledger/aries-framework-go/component/models/sdjwt/common"
 )
 
-const (
-	// ToDo remove it after shutting down the testnet
-	UpgradeHeight = 1240437 // The height at which the node was upgraded
-)
-
 var (
 	_ node.Node = &Node{}
 )
@@ -266,21 +261,15 @@ func (cp Node) HandleVPTxs(txn cometbfttypes.Tx, block *tmctypes.ResultBlock) (*
 	decoded := &vcvtypes.MsgExtendedProposalTxn{}
 	vp := ""
 
-	if txn == nil || len(txn) == 0 {
+	if len(txn) == 0 {
 		return nil, fmt.Errorf("transaction is nil or empty")
 	}
 
-	// Unmarshal the transaction
-	// Note: This assumes that the transaction is a MsgExtendedProposalTxn
-	if block.Block.Height > UpgradeHeight {
-		err := cp.cdc.Unmarshal(txn, decoded)
-		if err != nil {
-			return nil, fmt.Errorf("failed to unmarshal transaction: %w", err)
-		}
-		vp = string(decoded.Vp)
-	} else {
-		vp = string(txn)
+	err := cp.cdc.Unmarshal(txn, decoded)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal transaction: %w", err)
 	}
+	vp = string(decoded.Vp)
 
 	parsedJWT, err := jwt.Parse(strings.TrimSpace(vp), func(t *jwt.Token) (interface{}, error) {
 		return nil, nil
